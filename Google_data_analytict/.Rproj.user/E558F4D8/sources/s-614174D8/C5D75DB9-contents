@@ -1,0 +1,89 @@
+#Title: CISE W17 (Neural Network)
+# Author: Kent Daniel
+# Contact: B08605042@ntu.edu.tw / kentdaniel.com 
+# data:https://ceiba.ntu.edu.tw/course/935d63/content/modeldata.txt
+#thank you for everything you teach me it mean a lot for me
+#package
+library(tidyverse)
+library(knitr)
+library(neuralnet)
+library(h2o)
+#connect to h2o server
+localH2O = h2o.init()
+library(NeuralNetTools)
+#data
+data <- read.table("https://ceiba.ntu.edu.tw/course/935d63/content/modeldata.txt", header=FALSE)
+View(data)
+colnames(data) <- c("X1", "X2", "Group1", "Group2", "Group3")
+#show partial data
+kable(head(data), digits = 4)
+
+#plot and grouping data 
+p_data <- data.frame(data[, 1:2], apply(data[, 3:5], 1, which.max))
+# position of the element with the maximal value in a vector
+colnames(p_data) <- c("X1", "X2", "Group")
+p_data$Group = factor(p_data$Group)
+ggplot(p_data, aes(x = X1, y = X2, col = Group))+
+  geom_point(alpha = 0.6, size = 2) +
+  theme_bw() +
+  labs(x = expression(x[1]), y = expression(x[2])) +
+  coord_fixed(ratio = 1) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+#neural network
+nn <- neuralnet(Group1 + Group2 + Group3 ~ X1 + X2, data = data, hidden = 5)
+#plot with weights
+plot(nn)
+
+pred_nn <- compute(nn, data[, 1:2])
+
+table(p_data$Group, apply(pred_nn$net.result, 1, which.max))
+plotnet(nn, pos_col = "green", neg_col = "red", alpha_val = 0.5)
+
+#seperate data into training and test sets
+# I learn it from Kaggle titanic dataset
+train = p_data[1:500, ]
+test = p_data[501:600, ]
+
+#train a neural network model for classification
+model = h2o.deeplearning(y = "Group", training_frame = as.h2o(train), validation_frame = as.h2o(test), activation = "Rectifier", hidden = 5, epochs = 6000, train_samples_per_iteration = -2, export_weights_and_biases = T, nfolds = 10, fold_assignment = "Stratified")
+
+#predict groups (neural network model)
+pred = h2o.predict(model, as.h2o(p_data[, 1:2]))
+
+#weights of nn model
+weight1 = as.data.frame(t(h2o.weights(model, 1)))
+rownames(weight1) <- c("X1", "X2")
+colnames(weight1) <- c("Hidden 1", "Hidden 2", "Hidden 3", "Hidden 4", "Hidden 5")
+kable(weight1, digits = 4, caption = "Weights of 1st layer")
+
+weight2 = as.data.frame(t(h2o.weights(model, 2)))
+rownames(weight2) <- c("Hidden 1", "Hidden 2", "Hidden 3", "Hidden 4", "Hidden 5")
+colnames(weight2) <- c("Class 1", "Class 2", "Class 3")
+kable(weight2, digits = 4, caption = "Weights of 2nd layer")
+
+conf_train <- table(train[, 3], as.data.frame(pred)$predict[1:500])
+conf_train
+
+conf_test <- table(test[, 3], as.data.frame(pred)$predict[501:600])
+conf_test
+
+#use 10 fold cross validation
+model@model$cross_validation_metrics_summary
+
+#plot epoch (classification error)
+plot(model)
+
+#grid data
+grid <- as.data.frame(expand.grid(seq(min(data[, 1]), max(data[, 1]), length = 1000), seq(min(data[, 2]), max(data[, 2]), length = 1000)))
+colnames(grid) <- c("X1", "X2")
+pred <- h2o.predict(model, as.h2o(grid))
+
+#plot boundary
+ggplot() +
+  geom_raster(aes(x = grid[, 1],y = grid[, 2], fill = pred), alpha = 0.3, show.legend = F) +
+  theme_bw() +
+  geom_point(data = p_data, aes(x = X1, y = X2, color = Group), size = 2) + 
+  labs(title = "Neural network with boundary", x = expression(x[1]), y = expression(x[2])) +
+  theme(panel.background = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+pred <- as.data.frame(pred)$predict
